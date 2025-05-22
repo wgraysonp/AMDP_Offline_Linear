@@ -35,6 +35,9 @@ class SoftmaxPolicy:
         X = torch.tensor(np.matmul(Phi_s, self.param))
         action_probs = softmax(X, dim=0)
         return action_probs.numpy()
+    
+    def reset(self):
+        self.param = np.zeros(self.embed_dim)
 
 
 
@@ -58,6 +61,8 @@ class Linear_Agent:
         self.n_actions = n_actions
         self.reg_param = reg_param
         self.embed_dim = embed_dim
+        self.rewards = []
+        self.name = None
     
     def act(self, state):
         action = self.policy.get_action(state)
@@ -77,8 +82,40 @@ class Linear_Agent:
     def step(self):
         raise NotImplementedError
     
-    def train(self):
-        raise NotImplementedError
+    def eval(self, episode_length: int=100):
+        '''
+        Evaluate the current policy. Interact with the environment
+        for 'episide_length' steps and compute average reward.
+
+        Args:
+            episode_length: number of steps to take
+        '''
+
+        observation, _ = self.env.reset()
+        rewards = []
+        for t in range(episode_length):
+            action = self.policy.get_action(observation)
+            observation, reward, _, _, _ = self.env.step(action)
+            rewards.append(reward)
+
+        avg_reward = rewards.mean()
+        self.rewards.append(avg_reward)
+
+        return avg_reward
+    
+    def train(self, steps=100, eval_every=10, eval_length=100, verbose=True):
+        for i in range(steps):
+            if i % eval_every == 0:
+                avg_reward = self.eval(episode_length=eval_length)
+                if verbose:
+                    print(f"Agent: {self.name}, Episode: {i+1}, Reward: {avg_reward}")
+            self.step()
+
+
+    def reset(self):
+        self.rewards = []
+        self.policy.reset()
+
 
 
 
@@ -105,6 +142,7 @@ class OARAC_Agent(Linear_Agent):
                          reg_param=reg_param)
         self.beta = beta
         self.bw = bw
+        self.name = 'OARAC Agent'
 
     def get_problem_params(self):
         """
@@ -173,10 +211,33 @@ class OARAC_Agent(Linear_Agent):
 
 
 
+    def step(self):
+        '''
+        Perform a single algorithm step. 
+        '''
+
+        # critic update
+        d = self.embed_dim
+
+        v = cp.Variable(2*d  +1)
+        A, B1, B2, B3, R = self.get_problem_params()
+        constraints = [A @ v == R,
+                       v.T @ B1 @ v <= 1,
+                       v.T @ B2 @ v <= self.beta**2,
+                       v.T @ B3 @ v <= self.bw**2
+        ]
+        e1 = np.zeros_like(2*d + 1)
+        e1[0] = 1
+        objective = cp.Minimize(e1.T @ v)
+        problem = cp.Problem(objective, constraints)
+        problem.solve()
+
+        # actor update
+        w = v.value[d+1:]
+        self.policy.step(w)
 
 
-    def step():
-        pass
+        
 
 
 
